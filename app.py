@@ -1,60 +1,62 @@
 import streamlit as st
-from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip
+from moviepy.editor import VideoFileClip, TextClip, CompositeVideoClip, concatenate_videoclips
 import tempfile
 import os
 
-# 페이지 설정 (모바일 최적화)
 st.set_page_config(page_title="도장 홍보 숏츠 메이커", layout="centered")
 
-st.title("🥋 도장 홍보 숏츠 자동 제작")
-st.write("영상을 올리고 문구를 입력하면 숏츠가 완성됩니다.")
+st.title("🥋 도장 홍보 숏츠 자동 제작 (다중 선택)")
+st.write("여러 영상을 선택하면 순서대로 합쳐서 숏츠를 만듭니다.")
 
-# 1. 파일 업로드
-uploaded_file = st.file_uploader("원본 영상 선택 (MP4)", type=['mp4', 'mov'])
+# 1. 파일 업로드 (accept_multiple_files=True 추가)
+uploaded_files = st.file_uploader("원본 영상들 선택 (여러 개 가능)", type=['mp4', 'mov'], accept_multiple_files=True)
 
-# 2. 문구 입력
 top_text = st.text_input("상단 문구", "강력한 발차기!")
 bottom_text = st.text_input("하단 문구", "OO도장 신입 모집 중")
 text_color = st.color_picker("글자 색상", "#FFFFFF")
 
-if uploaded_file is not None:
-    if st.button("🚀 영상 제작 시작"):
-        with st.spinner('편집 중입니다... 잠시만 기다려주세요.'):
-            # 임시 파일 저장
-            tfile = tempfile.NamedTemporaryFile(delete=False)
-            tfile.write(uploaded_file.read())
-            
-            # MoviePy 편집 로직
-            clip = VideoFileClip(tfile.name)
-            
-            # 9:16 비율 조정 (중앙 크롭)
-            w, h = clip.size
-            target_ratio = 9/16
-            if w/h > target_ratio:
-                new_w = h * target_ratio
-                clip = clip.crop(x_center=w/2, width=new_w)
-            clip = clip.resize(height=1280) # 모바일용 적정 해상도
+if uploaded_files:
+    st.write(f"현재 {len(uploaded_files)}개의 영상이 선택되었습니다.")
+    
+    if st.button("🚀 합쳐서 영상 제작 시작"):
+        with st.spinner('여러 영상을 합치고 편집 중입니다... 시간이 좀 걸릴 수 있어요!'):
+            clips = []
+            temp_files = []
 
-            # 자막 추가 (간단한 구현을 위해 텍스트 클립 생성)
-            # *주의: 서버 환경에 한글 폰트가 설치되어 있어야 함
-            txt_top = TextClip(top_text, fontsize=50, color=text_color, font="NanumGothic-Bold")
-            txt_top = txt_top.set_position(('center', 100)).set_duration(clip.duration)
-            
-            txt_bottom = TextClip(bottom_text, fontsize=40, color='yellow', font="NanumGothic-Bold")
-            txt_bottom = txt_bottom.set_position(('center', 1100)).set_duration(clip.duration)
+            for uploaded_file in uploaded_files:
+                # 개별 파일 임시 저장
+                tfile = tempfile.NamedTemporaryFile(delete=False)
+                tfile.write(uploaded_file.read())
+                temp_files.append(tfile.name)
+                
+                # 영상 처리 및 비율 조정
+                clip = VideoFileClip(tfile.name)
+                w, h = clip.size
+                target_ratio = 9/16
+                if w/h > target_ratio:
+                    new_w = h * target_ratio
+                    clip = clip.crop(x_center=w/2, width=new_w)
+                clip = clip.resize(height=1280)
+                clips.append(clip)
 
-            final_video = CompositeVideoClip([clip, txt_top, txt_bottom])
+            # 2. 영상 이어 붙이기
+            final_clip = concatenate_videoclips(clips, method="compose")
+
+            # 3. 자막 추가
+            txt_top = TextClip(top_text, fontsize=50, color=text_color, font="NanumGothic-Bold").set_position(('center', 100)).set_duration(final_clip.duration)
+            txt_bottom = TextClip(bottom_text, fontsize=40, color='yellow', font="NanumGothic-Bold").set_position(('center', 1100)).set_duration(final_clip.duration)
+
+            final_video = CompositeVideoClip([final_clip, txt_top, txt_bottom])
             
             # 결과 저장
-            output_path = "result_shorts.mp4"
+            output_path = "result_combined.mp4"
             final_video.write_videofile(output_path, fps=24, codec="libx264")
             
-            # 3. 결과 미리보기 및 다운로드
+            # 4. 결과 출력
             st.video(output_path)
             with open(output_path, "rb") as file:
-                st.download_button(
-                    label="📥 편집된 영상 다운로드",
-                    data=file,
-                    file_name="dojang_shorts.mp4",
-                    mime="video/mp4"
-                )
+                st.download_button(label="📥 완성된 영상 다운로드", data=file, file_name="combined_shorts.mp4", mime="video/mp4")
+            
+            # 임시 파일 삭제
+            for f in temp_files:
+                if os.path.exists(f): os.remove(f)
